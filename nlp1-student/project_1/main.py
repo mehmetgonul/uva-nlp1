@@ -1,3 +1,4 @@
+import torch
 
 USE_PRETRAINED_TOKENIZER = False
 
@@ -10,6 +11,12 @@ else:
 
 from data import TRAIN_SET, VALIDATION_SET, TEST_SET
 
+# Setting the device 
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
 
 print()
 print("="* 50)
