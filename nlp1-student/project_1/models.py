@@ -15,7 +15,8 @@ def model_factory(model: str, hidden_dim: int, act_fn):
 def linear_model(seed=42):
     return LogisticRegression(
         solver="saga",
-        random_state=seed
+        random_state=seed,
+        # max_iter=10
     )
     
 def mlp(hidden_dim: int = 128, act_fn: str = "relu", seed=42):
@@ -23,9 +24,10 @@ def mlp(hidden_dim: int = 128, act_fn: str = "relu", seed=42):
         hidden_layer_sizes=(hidden_dim, ),
         activation=act_fn,
         solver="adam",
-        learning_rate=1e-4,
+        learning_rate_init=1e-4,
         alpha=1e-4,
-        iter=10,
+        max_iter=100,
+        batch_size=10000,
         random_state=seed
     )
     
@@ -34,8 +36,9 @@ def deep_mlp(hidden_dim: int = 128, act_fn: str = "relu", seed=42):
         hidden_layer_sizes=(hidden_dim, hidden_dim),
         activation=act_fn,
         solver="adam",
-        learning_rate=1e-4,
+        learning_rate_init=1e-4,
         alpha=1e-4,
-        iter=10,
+        max_iter=100,
+        batch_size=10000,
         random_state=seed,
     )

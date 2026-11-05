@@ -1,15 +1,26 @@
 import torch
+from datetime import datetime
+
+def get_timestamp():
+    return datetime.now().strftime("%H:%M:%S")
+
+
+print()
+print("="* 50)
+print(get_timestamp(), "Starting")
+print("="* 50)
+print()
 
 USE_PRETRAINED_TOKENIZER = False
 
 if USE_PRETRAINED_TOKENIZER: 
     # Standard tokenizer (gpt2)
-    from tokenize_standard import tokenize
+    from tokenize_standard import tokenize, get_vocab_size
 else:
     # Custom tokenizer in case the standard tokenizer uses too big vocab, and takes too long to train on
-    from tokenize_custom import tokenize
+    from tokenize_custom import tokenize, get_vocab_size
 
-from data import TRAIN_SET, VALIDATION_SET, TEST_SET
+from data import TRAIN_SET
 
 # Setting the device 
 device = "cpu"
@@ -17,12 +28,6 @@ if torch.cuda.is_available():
     device = "cuda"
 elif torch.backends.mps.is_available():
     device = "mps"
-
-# print()
-# print("="* 50)
-# print("Imports loaded, running...")
-# print("="* 50)
-# print()
 
 # # Example of tokenize() use:
 # premise = TRAIN_SET.loc[0, "premise"]
@@ -34,7 +39,12 @@ elif torch.backends.mps.is_available():
 from project_1.featurize import *
 from project_1.models import model_factory
 from part1.experiment import cross_validation_split
-from data import TRAIN_VAL_SET, TEST_SET
+
+print()
+print("-"* 25)
+print(get_timestamp(), "Imports loaded, running...")
+print("-"* 25)
+print()
 
 def get_feature_fn(feature: str):
     
@@ -47,9 +57,10 @@ def get_feature_fn(feature: str):
     return overlap
 
 
-SEED = 42
+SEEDS = [42]
 K = 5
-MODEL_NAMES = ["linear", "mlp", "deep_mlp"]
+# MODEL_NAMES = ["linear", "mlp", "deep_mlp"]
+MODEL_NAMES = ["mlp", "deep_mlp"]
 
 FEATURES = ["bag_of_words", "indicators", "overlap"]
 
@@ -74,54 +85,72 @@ def prep_inputs(tokens, feature, vocab_size):
         
     return X
 
-data = TRAIN_VAL_SET.loc[
-    TRAIN_VAL_SET["label"].isin([0, 1, 2])
+data = TRAIN_SET.loc[
+    TRAIN_SET["label"].isin([0, 1, 2])
     ].dropna(subset=["premise", "hypothesis"]).reset_index(drop=True)
 
 targets = data["label"].to_numpy(dtype=np.int64)
 
-test = TEST_SET.loc[
-    TEST_SET["label"].isin([0, 1, 2])
-    ].dropna(subset=["premise", "hypothesis"]).reset_index(drop=True)
+# test = TEST_SET.loc[
+#     TEST_SET["label"].isin([0, 1, 2])
+#     ].dropna(subset=["premise", "hypothesis"]).reset_index(drop=True)
 
-test_targets = test["label"].to_numpy(dtype=np.int64)
+# test_targets = test["label"].to_numpy(dtype=np.int64)
 
-test_X = []
-for premise, hypothesis in zip(test["premise"], test["hypothesis"]):
-    test_X.append((tokenize(premise).ids, tokenize(hypothesis).ids))
+# test_X = []
+# for premise, hypothesis in zip(test["premise"], test["hypothesis"]):
+#     test_X.append((tokenize(premise).ids, tokenize(hypothesis).ids))
 
 inputs = []
 for premise, hypothesis in zip(data["premise"], data["hypothesis"]):
     inputs.append((tokenize(premise).ids, tokenize(hypothesis).ids))
 
-splits = cross_validation_split(
+splits = {seed: cross_validation_split(
     pairs=list(zip(inputs, targets)),
     k=K,
-    seed=SEED
-)
+    seed=seed
+) for seed in SEEDS}
+
+print("-"* 25)
+print(get_timestamp(), "Data ready" )
+print("-"* 25)
+print()
 
 
-vocab_size = 0
+vocab_size = get_vocab_size()
 
 results = []
 
-for split in splits.values():
-    train_X, train_y = zip(*split["training"])
-    val_X, val_y = zip(*split["validation"])
-    
-    
-    for feature in FEATURES:
-        X_train = prep_inputs(train_X, feature, vocab_size)
-        X_val = prep_inputs(val_X, feature, vocab_size)
-        
-        for model_name in MODEL_NAMES:
-            model = model_factory(model_name, 128, "relu")
+seed_no = 0
 
+for seed in SEEDS:
+    seed_no += 1
+    split_no = 0
+    for split in splits[seed].values():
+        split_no += 1
+        feature_no = 0
+        train_X, train_y = zip(*split["training"])
+        val_X, val_y = zip(*split["validation"])
+        
+        for feature in FEATURES:
+            feature_no += 1
+            model_no = 0
+            X_train = prep_inputs(train_X, feature, vocab_size)
+            X_val = prep_inputs(val_X, feature, vocab_size)
             
-            model.fit(X_train, train_y)
-            acc = model.score(X_val, val_y)
-            acc_test = model.score(test_X, test_targets)
-            
-            conf_name = f"{model_name}_{feature}"
-            
+            for model_name in MODEL_NAMES:
+                model_no += 1
+
+                print(get_timestamp(), f"running {seed_no}-{split_no}-{feature_no}-{model_no}")
+                model = model_factory(model_name, 128, "relu")
+
+                
+                model.fit(X_train, train_y)
+                acc = model.score(X_val, val_y)
+                print(acc)
+                # acc_test = model.score(test_X, test_targets)
+                
+                conf_name = f"{model_name}_{feature}"
+                
+        break
             
