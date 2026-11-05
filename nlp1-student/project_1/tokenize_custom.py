@@ -9,3 +9,6 @@ tokenizer = train_tokenizer(corpus, vocab_size=5000, min_frequency=2)
 
 def tokenize(text):
     return tokenizer.encode(text)
+
+def get_vocab_size():
+    return tokenizer.get_vocab_size()

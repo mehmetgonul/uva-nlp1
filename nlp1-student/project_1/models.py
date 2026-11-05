@@ -15,7 +15,6 @@ def model_factory(model: str, hidden_dim: int, act_fn):
 def linear_model(seed=42):
     return LogisticRegression(
         solver="saga",
-        iter=10,
         random_state=seed
     )
     

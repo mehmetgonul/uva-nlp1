@@ -34,7 +34,7 @@ elif torch.backends.mps.is_available():
 from project_1.featurize import *
 from project_1.models import model_factory
 from part1.experiment import cross_validation_split
-from data import TRAIN_VAL_SET
+from data import TRAIN_VAL_SET, TEST_SET
 
 def get_feature_fn(feature: str):
     
@@ -80,6 +80,15 @@ data = TRAIN_VAL_SET.loc[
 
 targets = data["label"].to_numpy(dtype=np.int64)
 
+test = TEST_SET.loc[
+    TEST_SET["label"].isin([0, 1, 2])
+    ].dropna(subset=["premise", "hypothesis"]).reset_index(drop=True)
+
+test_targets = test["label"].to_numpy(dtype=np.int64)
+
+test_X = []
+for premise, hypothesis in zip(test["premise"], test["hypothesis"]):
+    test_X.append((tokenize(premise).ids, tokenize(hypothesis).ids))
 
 inputs = []
 for premise, hypothesis in zip(data["premise"], data["hypothesis"]):
@@ -94,9 +103,12 @@ splits = cross_validation_split(
 
 vocab_size = 0
 
+results = []
+
 for split in splits.values():
     train_X, train_y = zip(*split["training"])
     val_X, val_y = zip(*split["validation"])
+    
     
     for feature in FEATURES:
         X_train = prep_inputs(train_X, feature, vocab_size)
@@ -108,6 +120,7 @@ for split in splits.values():
             
             model.fit(X_train, train_y)
             acc = model.score(X_val, val_y)
+            acc_test = model.score(test_X, test_targets)
             
             conf_name = f"{model_name}_{feature}"
             
