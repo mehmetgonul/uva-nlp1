@@ -65,7 +65,7 @@ def main():
     SEEDS = [42]
     K = 5
 
-    MODEL_NAMES = ["linear"]
+    MODEL_NAMES = ["linear", "mlp", "deep_mlp"]
 
     FEATURES = ["bag_of_words", "indicators", "overlap"]
 
@@ -154,8 +154,8 @@ def main():
                     save_to=f"./results/{conf_name}/seed-{seed}",
                     seed=seed,
                     smlp_args={
-                        "hidden_dim": 128,
-                        "dropout": 0.1,
+                        "hidden_dim": 128 if model_name == "mlp" else 512,
+                        "dropout": 0.1 if model_name == "mlp" else 0.2,
                         "learning_rate": 5e-4,
                         "batch_size": 256,
                         "weight_decay": 1e-3,

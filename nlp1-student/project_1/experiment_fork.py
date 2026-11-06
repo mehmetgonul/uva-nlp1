@@ -122,13 +122,13 @@ def cross_validation_experiment(data_splits, outcome_space, encoder, model_optio
     
     data_splits: the training/validation folds
     encoder: an instance of Encoder
-    model_option: 'linear' (or 'logistic'), 'mlp', or 'deep_mlp'
+    model_option: 'linear', 'mlp', or 'deep_mlp'
     save_to: folder where to store models
     smlp_args: dict with training arguments for smlp.train_neural_network_model
     seed: initialization and training seed, unless overridden in the training arguments
     """
 
-    if model_option not in ("linear", "logistic", "mlp", "deep_mlp"):
+    if model_option not in ("linear", "mlp", "deep_mlp"):
         raise ValueError(f"Unknown model_option={model_option!r}")
     loglin_args = dict(loglin_args or {})
     smlp_args = dict(smlp_args or {})

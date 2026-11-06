@@ -14,6 +14,7 @@ from project_1.model_factory import model_factory
 
 class LogisticRegression(nn.Module):
     def __init__(self, input_dim, num_classes):
+        super().__init__()
 
         self.output = nn.Sequential(
             nn.Linear(input_dim, num_classes),            
@@ -96,21 +97,22 @@ class SparseDeepMLP(nn.Module):
             torch.zeros(hidden_dim)
         )
         
+        hidden_dim_2 = hidden_dim // 2
         
         # The first layer produces dense hidden vectors.
         self.weight2 = nn.Parameter(
-            torch.empty(hidden_dim, hidden_dim)
+            torch.empty(hidden_dim, hidden_dim_2)
         )
         self.bias2 = nn.Parameter(
-            torch.zeros(hidden_dim)
+            torch.zeros(hidden_dim_2)
         )
 
-        self.activation = nn.ReLU()
+        self.activation = nn.GELU()
         self.dropout = nn.Dropout(dropout)
 
         # Everything after the second layer is dense.
         self.output = nn.Sequential(
-            nn.Linear(hidden_dim, num_classes),            
+            nn.Linear(hidden_dim_2, num_classes),            
             nn.LogSoftmax(dim=-1) # for numerical stability, it is common to use log softmax, rather than softmax
         )
 
