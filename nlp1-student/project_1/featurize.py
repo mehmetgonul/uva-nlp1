@@ -2,7 +2,7 @@ import numpy as np
 
 
 def bag_of_words(token_ids, vocab_size):
-    """Count each token's occurrences in one sentence."""
+    """Per token occurance in the input"""
     
     return np.bincount(token_ids, minlength=vocab_size).astype(np.float32)
 
