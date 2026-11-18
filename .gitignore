@@ -6,8 +6,6 @@ __pycache__/
 # C extensions
 *.so
 .venv
-uv.lock
-pyproject.toml
 # Distribution / packaging
 .Python
 build/
