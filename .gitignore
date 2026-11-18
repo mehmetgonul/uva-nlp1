@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!/nlp1-student/part2/lib/
 lib64/
 parts/
 sdist/
