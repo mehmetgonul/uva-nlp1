@@ -385,12 +385,13 @@ class RNNEncoder(nn.Module):
         return h        
 
 class LSTMEncoder(nn.Module):
-    def __init__(self, hidden_size, embedding_matrix, padding_idx=0, freeze_embeddings=True, word_dropout=0.):
+    def __init__(self, hidden_size, embedding_matrix, padding_idx=0, freeze_embeddings=True, word_dropout=0., num_layers=1):
         """
         hidden_size: size of the recurrent state
         embedding_matrix: word vectors
         padding_idx: id of the pad token
         freeze_embeddings: treat embeddings as frozen
+        num_layers: number of stacked LSTM layers
         """
         super().__init__()
         vocab_size, embedding_dim = embedding_matrix.shape
@@ -408,7 +409,7 @@ class LSTMEncoder(nn.Module):
         self.lstm = nn.LSTM(
             input_size=embedding_dim, 
             hidden_size=hidden_size,
-            num_layers=1, # this could be turned into an argument 
+            num_layers=num_layers,
             batch_first=True  # important, in NLP we treat the first axis of the tensor as the batch dimension, and the second as the sequence dimension
         )
 
@@ -465,10 +466,14 @@ class SoftmaxRegressor(nn.Module):
     One important detail: for numerical stability the output is not softmax-activitate, 
      rather, it is logsoftmax-activated. This means the outputs are log prob masses, not prob masses.
     """
-    def __init__(self, hidden_size1, hidden_size2, num_classes, encoder: nn.Module, dropout=0.):
+    def __init__(
+        self, hidden_size1=50, hidden_size2=50, num_classes=None, encoder: nn.Module = None,
+        dropout=0., *, hidden_sizes=None,
+    ):
         """
         hidden_size1: size of first hidden layer (in the output transformation)
         hidden_size2: size of second hidden layer
+        hidden_sizes: optional sequence of classifier widths, from input to output
         num_classes: number of possible classes
         encoder: an nn.Module that maps each x to a single vector of size encoder.enc_dim
         """
@@ -476,17 +481,15 @@ class SoftmaxRegressor(nn.Module):
         self.encoder = encoder      
         self.num_classes = num_classes
         self.dropout_rate = dropout
-        self.output_layer = nn.Sequential(
-            nn.Dropout(p=dropout), # dropout is a regularisation technique (whereby at some rate, we drop/0-out inputs to a linear layer)
-            nn.Linear(encoder.enc_dim, hidden_size1),
-            nn.Tanh(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_size1, hidden_size2),
-            nn.Tanh(),
-            nn.Dropout(p=dropout),
-            nn.Linear(hidden_size2, num_classes),
-            nn.LogSoftmax(dim=-1) # for numerical stability, it is common to use log softmax, rather than softmax
-        )
+        if hidden_sizes is None:
+            hidden_sizes = (hidden_size1, hidden_size2)
+        layers = []
+        input_size = encoder.enc_dim
+        for width in hidden_sizes:
+            layers.extend([nn.Dropout(dropout), nn.Linear(input_size, width), nn.Tanh()])
+            input_size = width
+        layers.extend([nn.Dropout(dropout), nn.Linear(input_size, num_classes), nn.LogSoftmax(dim=-1)])
+        self.output_layer = nn.Sequential(*layers)
 
     def forward(self, x):  
         # [..., enc_dim]
