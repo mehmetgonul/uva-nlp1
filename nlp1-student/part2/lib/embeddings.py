@@ -24,14 +24,16 @@ def gensim_model(name, filename, release, binary=False):
     return Model(name, filename, url, binary)
 
 
+CONCEPTNET = Model(
+    "ConceptNet Numberbatch",
+    "numberbatch.gz",
+    "https://conceptnet.s3.amazonaws.com/downloads/2019/numberbatch/numberbatch-en-19.08.txt.gz",
+)
+
 MODELS = (
     gensim_model("GloVe", "glove.gz", "glove-wiki-gigaword-300"),
     gensim_model("fastText", "fasttext.gz", "fasttext-wiki-news-subwords-300"),
-    Model(
-        "ConceptNet Numberbatch",
-        "numberbatch.gz",
-        "https://conceptnet.s3.amazonaws.com/downloads/2019/numberbatch/numberbatch-en-19.08.txt.gz",
-    ),
+    CONCEPTNET,
     gensim_model("Google News Word2Vec", "word2vec.gz", "word2vec-google-news-300", binary=True),
 )
 
@@ -52,7 +54,14 @@ def _binary_records(file, count, dimensions):
     file.read()  # Consume the trailing newline and validate the gzip footer.
 
 
-def _load_vectors(path, model, vocabulary):
+def _text_vector(path, word, data, dimensions):
+    vector = np.fromstring(data, sep=" ", dtype=np.float32)
+    if vector.size != dimensions:
+        raise ValueError(f"{path}: invalid vector length for {word!r}")
+    return vector
+
+
+def _load_vectors_generic(path, model, vocabulary):
     # ponytail: these checkpoints have a word2vec header and single-token keys.
     # Revisit the reader if the experiment adds a different model format.
     vectors = {}
@@ -70,9 +79,7 @@ def _load_vectors(path, model, vocabulary):
         else:
             for line in file:
                 word, _, data = line.partition(b" ")
-                vector = np.fromstring(data, sep=" ", dtype=np.float32)
-                if vector.size != dimensions:
-                    raise ValueError(f"{path}: invalid vector length for {word!r}")
+                vector = _text_vector(path, word, data, dimensions)
                 vector_sum += vector
                 vector_count += 1
                 if word in vocabulary:
@@ -83,11 +90,64 @@ def _load_vectors(path, model, vocabulary):
     return vectors, unknown_vector
 
 
+def _load_vectors_conceptnet(path, vocabulary):
+    """Load exact matches and synthesize missing English entries by prefix."""
+    vectors = {}
+    with gzip.open(path, "rb") as file:
+        _, dimensions = map(int, file.readline().split())
+        for line in file:
+            word, _, data = line.partition(b" ")
+            if word in vocabulary:
+                vectors[word] = _text_vector(path, word, data, dimensions)
+
+    missing = {word.decode().lower() for word in vocabulary - vectors.keys()}
+    candidates = {
+        word.encode(): [word[:length].encode() for length in range(len(word) - 1, 1, -1)]
+        for word in missing
+        if word.encode() not in vectors
+    }
+    prefixes = {prefix for options in candidates.values() for prefix in options}
+    prefix_matches = set()
+    if not prefixes:
+        return vectors, dimensions, prefix_matches
+
+    lengths = sorted({len(prefix) for prefix in prefixes})
+    sums = {}
+    counts = {}
+    with gzip.open(path, "rb") as file:
+        file.readline()
+        for line in file:
+            word, _, data = line.partition(b" ")
+            matches = [
+                prefix for length in lengths if length <= len(word)
+                if (prefix := word[:length]) in prefixes
+            ]
+            if not matches:
+                continue
+            vector = _text_vector(path, word, data, dimensions)
+            for prefix in matches:
+                if prefix in sums:
+                    sums[prefix] += vector
+                    counts[prefix] += 1
+                else:
+                    sums[prefix] = vector.astype(np.float64)
+                    counts[prefix] = 1
+
+    for word, options in candidates.items():
+        for prefix in options:
+            if prefix in sums:
+                vectors[word] = (sums[prefix] / counts[prefix]).astype(np.float32)
+                prefix_matches.add(word)
+                break
+    return vectors, dimensions, prefix_matches
+
+
 @dataclass(frozen=True)
 class SentenceEmbedding:
     values: np.ndarray
     token_count: int
     matched_tokens: int
+    prefix_matches: int = 0
 
 
 def embed_sentences(sentences, model, *, cache_dir=DEFAULT_CACHE_DIR):
@@ -109,17 +169,28 @@ def embed_sentences(sentences, model, *, cache_dir=DEFAULT_CACHE_DIR):
 
     path = download(model.url, Path(cache_dir) / model.filename)
     keys = {form.encode() for word in words for form in (word, word.lower())}
-    vectors, unknown_vector = _load_vectors(path, model, keys)
+    use_prefix_fallback = model == CONCEPTNET
+    prefix_keys = set()
+    if use_prefix_fallback:
+        vectors, dimensions, prefix_keys = _load_vectors_conceptnet(path, keys)
+        default_row = np.zeros(dimensions, dtype=np.float32)
+    else:
+        vectors, default_row = _load_vectors_generic(path, model, keys)
 
     # An empty token cannot pass the word filter, so its ID is reserved for misses.
     vocab = Vocabulary([""], default="")
-    rows = [unknown_vector]
+    rows = [default_row]
+    prefix_ids = set()
     for word in sorted(words):
-        vector = vectors.get(word.encode())
+        key = word.encode()
+        vector = vectors.get(key)
         if vector is None:
-            vector = vectors.get(word.lower().encode())
+            key = word.lower().encode()
+            vector = vectors.get(key)
         if vector is not None:
-            vocab.add(word)
+            index = vocab.add(word)
+            if key in prefix_keys:
+                prefix_ids.add(index)
             rows.append(vector)
     vocab.freeze()
     tokenizer.vocab = vocab
@@ -130,7 +201,11 @@ def embed_sentences(sentences, model, *, cache_dir=DEFAULT_CACHE_DIR):
         token_ids = tokenizer.ids(sentence)
         ids = [token_ids[position] for position in positions]
         matched_tokens = sum(index != vocab.default_index for index in ids)
-        embeddings[sentence] = SentenceEmbedding(matrix[ids], len(ids), matched_tokens)
+        token_count = len(ids)
+        if use_prefix_fallback:
+            ids = [index for index in ids if index != vocab.default_index]
+        prefix_matches = sum(index in prefix_ids for index in ids)
+        embeddings[sentence] = SentenceEmbedding(matrix[ids], token_count, matched_tokens, prefix_matches)
     return embeddings
 
 
