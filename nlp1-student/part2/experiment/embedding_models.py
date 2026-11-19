@@ -12,7 +12,7 @@ from scipy.spatial.distance import cosine
 from sklearn.neighbors import KernelDensity
 
 from part2.lib.dataset import DEFAULT_CACHE_DIR, FIELDS, LABELS, load_snli
-from part2.lib.embeddings import CONCEPTNET, MODELS, embed_snli_pairs
+from part2.lib.embeddings import MODELS, embed_snli_pairs
 
 COLORS = ("#0072B2", "#007A58", "#D55E00")
 
@@ -32,7 +32,7 @@ def cosine_similarity(premise, hypothesis):
 
 
 def score_pair(model, row_id, label, premise, hypothesis, *, word_counts):
-    premise_tokens, premise_hits, premise_prefix, hypothesis_tokens, hypothesis_hits, hypothesis_prefix = word_counts
+    premise_tokens, premise_hits, hypothesis_tokens, hypothesis_hits = word_counts
     return {
         "model": model,
         "snli_row": row_id,
@@ -42,8 +42,6 @@ def score_pair(model, row_id, label, premise, hypothesis, *, word_counts):
         "premise_hits": premise_hits,
         "hypothesis_tokens": hypothesis_tokens,
         "hypothesis_hits": hypothesis_hits,
-        "premise_prefix_matches": premise_prefix,
-        "hypothesis_prefix_matches": hypothesis_prefix,
     }
 
 
@@ -53,8 +51,8 @@ def pooled_word_pairs(model, cache, pairs):
         premise_vector = mean_pool(premise.values)
         hypothesis_vector = mean_pool(hypothesis.values)
         counts = (
-            premise.token_count, premise.matched_tokens, premise.prefix_matches,
-            hypothesis.token_count, hypothesis.matched_tokens, hypothesis.prefix_matches,
+            premise.token_count, premise.matched_tokens,
+            hypothesis.token_count, hypothesis.matched_tokens,
         )
         yield row_id, label, premise_vector, hypothesis_vector, counts
 
@@ -75,21 +73,18 @@ def write_oov_statistics(path, oov_counts):
     with path.open("w", encoding="utf-8") as file:
         file.write("Out-of-vocabulary statistics — SNLI test set\n\n")
         file.write(
-            f"{'Model':<25} {'Tokens':>10} {'Missing from vocab':>19}"
-            f" {'Matched by prefix':>18} {'Still unmatched':>16}\n"
+            f"{'Model':<25} {'Tokens':>10} {'Unmatched':>19}"
+            "\n"
         )
-        for model, (tokens, unmatched, prefixes) in oov_counts.items():
-            missing = unmatched + prefixes
-            rate = missing / tokens if tokens else 0
-            missing_text = f"{missing:,} ({rate:.2%})"
-            prefix_text = f"{prefixes:,}" if model == CONCEPTNET.name else "—"
+        for model, (tokens, unmatched) in oov_counts.items():
+            rate = unmatched / tokens if tokens else 0
+            missing_text = f"{unmatched:,} ({rate:.2%})"
             file.write(
                 f"{model:<25} {tokens:>10,} {missing_text:>19}"
-                f" {prefix_text:>18} {unmatched:>16,}\n"
+                "\n"
             )
         file.write(
-            "\nNumberbatch omits tokens with no prefix match from the sentence mean.\n"
-            "The other models use their global <unk> vector for tokens missing from the vocabulary.\n"
+            "\nAll models use their global <unk> vector for tokens missing from the vocabulary.\n"
         )
 
 
@@ -105,8 +100,7 @@ def report_cosines(output, scores):
     for model, rows in scores_by_model.items():
         tokens = sum(row[f"{field}_tokens"] for row in rows for field in FIELDS)
         hits = sum(row[f"{field}_hits"] for row in rows for field in FIELDS)
-        prefixes = sum(row[f"{field}_prefix_matches"] for row in rows for field in FIELDS)
-        oov_counts[model] = (tokens, tokens - hits, prefixes)
+        oov_counts[model] = (tokens, tokens - hits)
     row_count = (len(model_names) + 1) // 2
     figure = Figure(figsize=(11, 3.5 * row_count), layout="constrained")
     FigureCanvasAgg(figure)
@@ -139,11 +133,9 @@ def report_cosines(output, scores):
                 tokens = sum(row[f"{field}_tokens"] or 0 for row in group)
                 statistics[f"{field}_coverage"] = f"{hits / tokens:.4f}" if tokens else ""
             summary.append(statistics)
-        tokens, unmatched, prefixes = oov_counts[model]
+        tokens, unmatched = oov_counts[model]
         rate = unmatched / tokens if tokens else 0
         subtitle = f"Unmatched: {unmatched:,} ({rate:.2%})"
-        if model == CONCEPTNET.name:
-            subtitle += f" · {prefixes:,} prefix matches"
         ax.set(title=f"{model}\n{subtitle}", xlim=(0, 1))
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="y", alpha=0.2)
