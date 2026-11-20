@@ -410,6 +410,7 @@ class LSTMEncoder(nn.Module):
             input_size=embedding_dim, 
             hidden_size=hidden_size,
             num_layers=num_layers,
+            dropout=0.1,
             batch_first=True  # important, in NLP we treat the first axis of the tensor as the batch dimension, and the second as the sequence dimension
         )
 

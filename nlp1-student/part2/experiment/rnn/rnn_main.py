@@ -1,21 +1,21 @@
 """Hyperparameter search for the ConceptNet LSTM on SNLI."""
 
 # Cross-validation settings from Project 1
-SEEDS = [42, 43, 44]
+SEEDS = [42]
 NUM_FOLDS = 5
 
 # LSTM encoder with fixed ConceptNet embeddings
-LSTM_HIDDEN_SIZES = [20, 25, 30]
-LSTM_NUM_LAYERS = [1, 2, 3]
+LSTM_HIDDEN_SIZES = [30]
+LSTM_NUM_LAYERS = [2]
 
 # Each tuple gives the classifier's hidden layer widths in order.
 CLASSIFIER_HIDDEN_SIZES = [(50, 50)]
 CLASSIFIER_DROPOUT_RATES = [0.1]
 
 # AdamW and training schedule
-LEARNING_RATES = [1e-3, 5e-4, 2e-4]
+LEARNING_RATES = [1e-3]
 WEIGHT_DECAYS = [1e-4]
-BATCH_SIZES = [256, 512, 1024]
+BATCH_SIZES = [512]
 NUM_EPOCHS = [10]
 
 
@@ -38,12 +38,10 @@ if __name__ == "__main__":
         device = "mps"
 
     output_dir = rnn_dir / "output" / "conceptnet"
-    corpus, embeddings, row_ids = data.load_snli_training(project_dir / "cache")
-    table_path = data.save_numberbatch(embeddings, output_dir)
-    print(f"Data ready | {len(corpus):,} SNLI pairs | device={device}", flush=True)
+    corpus = None
 
     for seed in SEEDS:
-        folds = data.cross_validation_split(corpus, row_ids, NUM_FOLDS, seed)
+        folds = None
         grid = product(
             LSTM_HIDDEN_SIZES, LSTM_NUM_LAYERS, CLASSIFIER_HIDDEN_SIZES, CLASSIFIER_DROPOUT_RATES,
             LEARNING_RATES, WEIGHT_DECAYS, BATCH_SIZES, NUM_EPOCHS,
@@ -54,6 +52,20 @@ if __name__ == "__main__":
                 f"frozen-lstm{depth}x{hidden_size}-mlp{head}-drop{dropout}"
                 f"-lr{lr}-wd{weight_decay}-batch{batch_size}-epochs{epochs}-cv{NUM_FOLDS}"
             )
+            run_dir = output_dir / name / f"seed-{seed}"
+            try:
+                run_dir.mkdir(parents=True)
+            except FileExistsError:
+                print(f"Skipping existing run: {run_dir}", flush=True)
+                continue
+
+            if corpus is None:
+                corpus, embeddings, row_ids = data.load_snli_training(project_dir / "cache")
+                table_path = data.save_numberbatch(embeddings, output_dir)
+                print(f"Data ready | {len(corpus):,} SNLI pairs | device={device}", flush=True)
+            if folds is None:
+                folds = data.cross_validation_split(corpus, row_ids, NUM_FOLDS, seed)
+
             print(f"Running {name}, seed={seed}", flush=True)
             run = experiment.cross_validation(
                 data_splits=folds,
@@ -72,6 +84,6 @@ if __name__ == "__main__":
                 device=device,
                 seed=seed,
                 shared_table=table_path,
-                save_to=output_dir / name / f"seed-{seed}",
+                save_to=run_dir,
             )
             print(f"Validation accuracies: {run['accuracies']}", flush=True)
