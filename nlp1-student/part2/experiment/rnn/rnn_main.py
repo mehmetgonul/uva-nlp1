@@ -5,19 +5,20 @@ SEEDS = [42]
 NUM_FOLDS = 5
 
 # LSTM encoder with fixed ConceptNet embeddings
-LSTM_HIDDEN_SIZES = [30]
-LSTM_NUM_LAYERS = [3]
-LSTM_BIDIRECTIONAL = [True]
+LSTM_HIDDEN_SIZES = [35]
+LSTM_NUM_LAYERS = [4]
+LSTM_BIDIRECTIONAL = [False]
 
 # Each tuple gives the classifier's hidden layer widths in order.
 CLASSIFIER_HIDDEN_SIZES = [(50, 50)]
 CLASSIFIER_DROPOUT_RATES = [0.1]
 
 # AdamW and training schedule
-LEARNING_RATES = [3e-3, 1e-3, 5e-4]
+# LEARNING_RATES = [3e-3, 1e-3, 5e-4]
+LEARNING_RATES = [1e-3]
 WEIGHT_DECAYS = [1e-4]
-BATCH_SIZES = [256, 512, 1024]
-NUM_EPOCHS = [15]
+BATCH_SIZES = [512]
+NUM_EPOCHS = [10]
 
 
 if __name__ == "__main__":
@@ -38,7 +39,7 @@ if __name__ == "__main__":
     elif torch.backends.mps.is_available():
         device = "mps"
 
-    output_dir = rnn_dir / "output" / "conceptnet"
+    output_dir = rnn_dir / "output" / "conceptnet" / "temp_tok"
     corpus = None
 
     for seed in SEEDS:

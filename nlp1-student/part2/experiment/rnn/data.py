@@ -4,7 +4,6 @@ import hashlib
 import json
 import random
 import re
-import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import chain
@@ -16,12 +15,10 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import Subset
 
-from .clslib import Vocabulary
+from .clslib import BasicTokenizer, Vocabulary
 from .experiment import LabelledCorpus
 
 SNLI_LABELS = ("entailment", "neutral", "contradiction")
-WORD_PATTERN = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
-APOSTROPHES = str.maketrans("’‘ʼ", "'''")
 
 
 @lru_cache(maxsize=65536)
@@ -75,16 +72,22 @@ def load_snli_training(cache_dir):
     data = load_dataset("stanfordnlp/snli", split="train", cache_dir=str(cache_dir)).to_pandas()
     data = data.loc[data["label"].isin([0, 1, 2])].dropna(subset=["premise", "hypothesis"])
 
+    tokenizer = BasicTokenizer(
+        lowercase=True,
+        remove_punct=False,
+        remove_stopwords=False,
+        language="english",
+    )
     sentences = {}
     for text in chain(data["premise"], data["hypothesis"]):
         if text not in sentences:
-            normalized = unicodedata.normalize("NFKC", text).translate(APOSTROPHES)
-            sentences[text] = [numberbatch_term(word) for word in WORD_PATTERN.findall(normalized)]
+            tokens = tokenizer.tokens(text)
+            sentences[text] = [numberbatch_term(token) for token in tokens]
 
     table = load_numberbatch(sentences.values(), cache_dir)
     vocab = table.vocab
     for text, tokens in sentences.items():
-        sentences[text] = [vocab.index(token) for token in tokens if token in vocab]
+        sentences[text] = [vocab.index(token) for token in tokens]
 
     sep_id = vocab.index("<sep>")
     inputs = (
