@@ -1,5 +1,3 @@
-"""Compare sentence embedding models on SNLI pairs."""
-
 import argparse
 import csv
 from collections import defaultdict
@@ -14,6 +12,7 @@ from sklearn.neighbors import KernelDensity
 from part2.lib.dataset import DEFAULT_CACHE_DIR, FIELDS, LABELS, load_snli
 from part2.lib.embeddings import MODELS, embed_snli_pairs
 
+SPLIT = "train"
 COLORS = ("#0072B2", "#007A58", "#D55E00")
 
 
@@ -71,7 +70,7 @@ def write_csv(path, rows):
 
 def write_oov_statistics(path, oov_counts):
     with path.open("w", encoding="utf-8") as file:
-        file.write("Out-of-vocabulary statistics — SNLI test set\n\n")
+        file.write(f"Out-of-vocabulary statistics — SNLI {SPLIT} set\n\n")
         file.write(
             f"{'Model':<25} {'Tokens':>10} {'Unmatched':>19}"
             "\n"
@@ -142,7 +141,8 @@ def report_cosines(output, scores):
         ax.legend(frameon=False)
 
     axes[0, 0].set_ylim(bottom=0)
-    figure.suptitle("Premise–hypothesis similarity on SNLI test")
+    total_tokens, _ = next(iter(oov_counts.values()))  # All models score the same tokens.
+    figure.suptitle(f"Premise–hypothesis similarity on SNLI {SPLIT}\n{total_tokens:,} tokens processed per model")
     figure.supxlabel("Cosine similarity between sentence vectors")
     figure.supylabel("Probability density")
     figure.savefig(output / "cosine_by_label.png", dpi=180)
@@ -166,7 +166,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent / "results")
     args = parser.parse_args()
 
-    pairs = load_snli(cache_dir=args.cache_dir)
+    pairs = load_snli(split=SPLIT, cache_dir=args.cache_dir)
     scores = score_static_models(args.cache_dir, pairs)
     report_cosines(args.output_dir, scores)
 

@@ -385,13 +385,17 @@ class RNNEncoder(nn.Module):
         return h        
 
 class LSTMEncoder(nn.Module):
-    def __init__(self, hidden_size, embedding_matrix, padding_idx=0, freeze_embeddings=True, word_dropout=0., num_layers=1):
+    def __init__(
+        self, hidden_size, embedding_matrix, padding_idx=0, freeze_embeddings=True,
+        word_dropout=0., num_layers=1, bidirectional=False,
+    ):
         """
-        hidden_size: size of the recurrent state
+        hidden_size: size of the recurrent state per direction
         embedding_matrix: word vectors
         padding_idx: id of the pad token
         freeze_embeddings: treat embeddings as frozen
         num_layers: number of stacked LSTM layers
+        bidirectional: concatenate the final forward and backward states if enabled
         """
         super().__init__()
         vocab_size, embedding_dim = embedding_matrix.shape
@@ -410,13 +414,14 @@ class LSTMEncoder(nn.Module):
             input_size=embedding_dim, 
             hidden_size=hidden_size,
             num_layers=num_layers,
+            bidirectional=bidirectional,
             dropout=0.1,
             batch_first=True  # important, in NLP we treat the first axis of the tensor as the batch dimension, and the second as the sequence dimension
         )
 
     @property
     def enc_dim(self):
-        return self.hidden_size
+        return 2 * self.hidden_size if self.lstm.bidirectional else self.hidden_size
 
     @property
     def pad_idx(self):
@@ -424,7 +429,7 @@ class LSTMEncoder(nn.Module):
 
     def forward(self, x):
         """
-        Encode each sequence in the batch into a single H-dimensional vector.
+        Encode each sequence into a vector of size enc_dim.
         
         x: a batch of sequences of token ids
         """
@@ -454,9 +459,10 @@ class LSTMEncoder(nn.Module):
         # for efficiency, we let torch do the for loop, and for that we need to 'pack' our sentences
         # using a torch helper
         packed = pack_padded_sequence(embedded, lengths.cpu(), batch_first=True, enforce_sorted=False) # sorting leads to even more efficient processing, but it is cumbersome and we skip it
-        output, (hidden, cell) = self.lstm(packed)
-        final_hidden = hidden[-1]
-        return final_hidden        
+        _, (hidden, _) = self.lstm(packed)
+        if self.lstm.bidirectional:
+            return torch.cat((hidden[-2], hidden[-1]), dim=-1)
+        return hidden[-1]
 
 class SoftmaxRegressor(nn.Module):
     """

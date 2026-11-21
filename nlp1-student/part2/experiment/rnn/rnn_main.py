@@ -6,17 +6,18 @@ NUM_FOLDS = 5
 
 # LSTM encoder with fixed ConceptNet embeddings
 LSTM_HIDDEN_SIZES = [30]
-LSTM_NUM_LAYERS = [2]
+LSTM_NUM_LAYERS = [3]
+LSTM_BIDIRECTIONAL = [True]
 
 # Each tuple gives the classifier's hidden layer widths in order.
 CLASSIFIER_HIDDEN_SIZES = [(50, 50)]
 CLASSIFIER_DROPOUT_RATES = [0.1]
 
 # AdamW and training schedule
-LEARNING_RATES = [1e-3]
+LEARNING_RATES = [3e-3, 1e-3, 5e-4]
 WEIGHT_DECAYS = [1e-4]
-BATCH_SIZES = [512]
-NUM_EPOCHS = [10]
+BATCH_SIZES = [256, 512, 1024]
+NUM_EPOCHS = [15]
 
 
 if __name__ == "__main__":
@@ -43,13 +44,15 @@ if __name__ == "__main__":
     for seed in SEEDS:
         folds = None
         grid = product(
-            LSTM_HIDDEN_SIZES, LSTM_NUM_LAYERS, CLASSIFIER_HIDDEN_SIZES, CLASSIFIER_DROPOUT_RATES,
+            LSTM_HIDDEN_SIZES, LSTM_NUM_LAYERS, LSTM_BIDIRECTIONAL,
+            CLASSIFIER_HIDDEN_SIZES, CLASSIFIER_DROPOUT_RATES,
             LEARNING_RATES, WEIGHT_DECAYS, BATCH_SIZES, NUM_EPOCHS,
         )
-        for hidden_size, depth, widths, dropout, lr, weight_decay, batch_size, epochs in grid:
+        for hidden_size, depth, bidirectional, widths, dropout, lr, weight_decay, batch_size, epochs in grid:
             head = "-".join(map(str, widths)) or "linear"
+            direction_suffix = "-bidir" if bidirectional else ""
             name = (
-                f"frozen-lstm{depth}x{hidden_size}-mlp{head}-drop{dropout}"
+                f"frozen-lstm{depth}x{hidden_size}{direction_suffix}-mlp{head}-drop{dropout}"
                 f"-lr{lr}-wd{weight_decay}-batch{batch_size}-epochs{epochs}-cv{NUM_FOLDS}"
             )
             run_dir = output_dir / name / f"seed-{seed}"
@@ -73,7 +76,12 @@ if __name__ == "__main__":
                 tokenizer=None,  # The corpus already contains token IDs.
                 emb_model=embeddings,
                 enc_type="lstm",
-                enc_kwargs={"hidden_size": hidden_size, "num_layers": depth, "freeze_embeddings": True},
+                enc_kwargs={
+                    "hidden_size": hidden_size,
+                    "num_layers": depth,
+                    "bidirectional": bidirectional,
+                    "freeze_embeddings": True,
+                },
                 regressor_kwargs={"hidden_sizes": widths, "dropout": dropout},
                 opt_kwargs={
                     "learning_rate": lr,
