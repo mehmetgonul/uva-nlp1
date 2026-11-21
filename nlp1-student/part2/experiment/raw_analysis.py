@@ -1,15 +1,13 @@
 import argparse
-import re
 import sys
 from collections import Counter
 from itertools import product
 from pathlib import Path
 
 import numpy as np
+from nltk.tokenize import word_tokenize
+from nltk.tokenize.util import align_tokens
 from scipy.spatial.distance import cosine
-
-WORD_PATTERN = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
-APOSTROPHES = str.maketrans("’‘ʼ", "'''")
 
 project_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_dir))
@@ -30,8 +28,9 @@ loss_rows = {}
 
 
 def highlight(text, position):
-    match = list(WORD_PATTERN.finditer(text.translate(APOSTROPHES)))[position]
-    start, end = match.span()
+    tokens = word_tokenize(text)[:position + 1]
+    words = [token for token in tokens if any(char.isalnum() for char in token)]
+    start, end = align_tokens(words, text)[-1]
     return f"{text[:start]}**{text[start:end]}**{text[end:]}"
 
 
@@ -42,8 +41,8 @@ example_premise = "A woman is handing out fruit."
 example_rows = []
 
 for row_id, pair in load_snli(split="train"):
-    premise = WORD_PATTERN.findall(pair["premise"].lower().translate(APOSTROPHES))
-    hypothesis = WORD_PATTERN.findall(pair["hypothesis"].lower().translate(APOSTROPHES))
+    premise = word_tokenize(pair["premise"].lower())
+    hypothesis = word_tokenize(pair["hypothesis"].lower())
 
     # Keep every pair where exactly one word was replaced.
     if len(premise) != len(hypothesis):
@@ -54,6 +53,8 @@ for row_id, pair in load_snli(split="train"):
     position = changed_positions[0]
     before = premise[position]
     after = hypothesis[position]
+    if not any(char.isalnum() for char in before) or not any(char.isalnum() for char in after):
+        continue
     label = LABELS[pair["label"]]
     label_counts[label] += 1
 
