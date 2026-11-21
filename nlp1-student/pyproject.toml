@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=2.5.5",
     "numpyro>=0.22.0",
     "pandas>=3.1.1",
+    "pyspellchecker>=0.9.1",
     "scikit-learn>=1.9.1",
     "scipy>=1.18.1",
     "seaborn>=0.13.2",
