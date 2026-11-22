@@ -1,17 +1,19 @@
 import argparse
+import re
 import sys
 from collections import Counter
 from itertools import product
 from pathlib import Path
 
-import numpy as np
-from nltk.tokenize import word_tokenize
-from nltk.tokenize.util import align_tokens
 from scipy.spatial.distance import cosine
 
 project_dir = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_dir))
 from part2.lib.dataset import LABELS, load_snli
+from part2.lib.embeddings import CONCEPTNET, FASTTEXT, GLOVE, load_word_vectors
+
+WORD_PATTERN = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+APOSTROPHES = str.maketrans("’‘ʼ", "'''")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--loss-examples", action="store_true", help="Save the Numberbatch loss tables as plain text")
@@ -28,9 +30,8 @@ loss_rows = {}
 
 
 def highlight(text, position):
-    tokens = word_tokenize(text)[:position + 1]
-    words = [token for token in tokens if any(char.isalnum() for char in token)]
-    start, end = align_tokens(words, text)[-1]
+    match = list(WORD_PATTERN.finditer(text.translate(APOSTROPHES)))[position]
+    start, end = match.span()
     return f"{text[:start]}**{text[start:end]}**{text[end:]}"
 
 
@@ -41,8 +42,8 @@ example_premise = "A woman is handing out fruit."
 example_rows = []
 
 for row_id, pair in load_snli(split="train"):
-    premise = word_tokenize(pair["premise"].lower())
-    hypothesis = word_tokenize(pair["hypothesis"].lower())
+    premise = WORD_PATTERN.findall(pair["premise"].lower().translate(APOSTROPHES))
+    hypothesis = WORD_PATTERN.findall(pair["hypothesis"].lower().translate(APOSTROPHES))
 
     # Keep every pair where exactly one word was replaced.
     if len(premise) != len(hypothesis):
@@ -53,8 +54,6 @@ for row_id, pair in load_snli(split="train"):
     position = changed_positions[0]
     before = premise[position]
     after = hypothesis[position]
-    if not any(char.isalnum() for char in before) or not any(char.isalnum() for char in after):
-        continue
     label = LABELS[pair["label"]]
     label_counts[label] += 1
 
@@ -73,23 +72,17 @@ lines = [f"One-word substitutions in SNLI train: {sum(label_counts.values()):,}"
 for label in LABELS:
     lines.append(f"  {label}: {label_counts[label]:,}")
 
-cache_dir = project_dir / "cache" / "snli_embedding_similarity"
-models = ["Numberbatch", "GloVe", "fastText"]
+models = (CONCEPTNET, GLOVE, FASTTEXT)
 common_words = {word for word in words if word.isalpha()}
 model_vectors = {}
 for model in models:
-    with np.load(cache_dir / f"{model.lower()}.npz") as cache:
-        vectors = {
-            word: vector
-            for word, vector, direct in zip(cache["words"], cache["vectors"], cache["direct"])
-            if direct and word in common_words
-        }
+    vectors, _ = load_word_vectors(model, common_words)
     model_vectors[model] = vectors
     common_words.intersection_update(vectors)
 
 lines.append(f"\nExample premise: {example_premise}")
 lines.append(f"{'Label':<15} {'Train row':<10} {'Hypothesis':<35} Word cosine (Numberbatch)")
-vectors = model_vectors["Numberbatch"]
+vectors = model_vectors[CONCEPTNET]
 for label, row_id, hypothesis, before, after in example_rows:
     if before in vectors and after in vectors:
         score = 1 - cosine(vectors[before], vectors[after])
@@ -140,7 +133,7 @@ results_dir.mkdir(exist_ok=True)
 (results_dir / "raw_analysis.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 if args.loss_examples:
-    vectors = model_vectors["Numberbatch"]
+    vectors = model_vectors[CONCEPTNET]
     lines = ["Numberbatch loss examples", "", "Scores are cosine similarities between the highlighted words."]
     for label, sample in LOSS_EXAMPLES.items():
         lines.extend(["", f"Entailment vs. {label.lower()}", ""])

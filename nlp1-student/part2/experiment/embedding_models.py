@@ -87,8 +87,8 @@ def write_oov_statistics(path, oov_counts):
                 "\n"
             )
         file.write(
-            "\nCoverage counts lowercased NLTK tokens, including punctuation and stopwords, "
-            "from the premise and hypothesis. Numberbatch uses the RNN's digit masking. "
+            "\nCoverage counts lowercased premise and hypothesis tokens containing a letter or digit, "
+            "including stopwords. "
             "Missing tokens receive the model's global <unk> vector.\n"
         )
 

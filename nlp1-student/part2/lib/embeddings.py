@@ -32,9 +32,12 @@ CONCEPTNET = Model(
     "https://conceptnet.s3.amazonaws.com/downloads/2019/numberbatch/numberbatch-en-19.08.txt.gz",
 )
 
+GLOVE = gensim_model("GloVe", "glove.gz", "glove-wiki-gigaword-300")
+FASTTEXT = gensim_model("fastText", "fasttext.gz", "fasttext-wiki-news-subwords-300")
+
 MODELS = (
-    gensim_model("GloVe", "glove.gz", "glove-wiki-gigaword-300"),
-    gensim_model("fastText", "fasttext.gz", "fasttext-wiki-news-subwords-300"),
+    GLOVE,
+    FASTTEXT,
     CONCEPTNET,
     gensim_model("Google News Word2Vec", "word2vec.gz", "word2vec-google-news-300", binary=True),
 )
@@ -108,6 +111,14 @@ def _load_vectors_generic(path, model, vocabulary):
     return vectors, unknown_vector
 
 
+def load_word_vectors(model, words, *, cache_dir=DEFAULT_CACHE_DIR):
+    """Load exact vocabulary matches and the model's mean vector for unknown words."""
+    path = download(model.url, Path(cache_dir) / model.filename)
+    keys = {word.encode() for word in words}
+    vectors, unknown = _load_vectors_generic(path, model, keys)
+    return {key.decode(): vector for key, vector in vectors.items()}, unknown
+
+
 @dataclass(frozen=True)
 class SentenceEmbedding:
     values: np.ndarray
@@ -117,23 +128,20 @@ class SentenceEmbedding:
 
 def embed_sentences(sentences, model, *, cache_dir=DEFAULT_CACHE_DIR):
     """Return word vectors per distinct sentence, keyed by its original text."""
-    sentences = dict.fromkeys(sentences)
     tokenizer = snli_tokenizer()
-    if model == CONCEPTNET:
-        table = load_numberbatch_embeddings(cache_dir)
-        vocab, matrix = table.vocab, table.vectors
-    else:
-        keys = {token.encode() for sentence in sentences for token in tokenizer.tokens(sentence)}
-        path = download(model.url, Path(cache_dir) / model.filename)
-        vectors, default_row = _load_vectors_generic(path, model, keys)
-        vocab = Vocabulary(["", *(key.decode() for key in vectors)], default="", frozen=True)
-        matrix = np.stack([default_row, *vectors.values()])
+    tokens_by_sentence = {}
+    for sentence in dict.fromkeys(sentences):
+        tokens_by_sentence[sentence] = [
+            token for token in tokenizer.tokens(sentence)
+            if any(character.isalnum() for character in token)
+        ]
+    words = (token for tokens in tokens_by_sentence.values() for token in tokens)
+    vectors, default_row = load_word_vectors(model, words, cache_dir=cache_dir)
+    vocab = Vocabulary(["", *vectors], default="", frozen=True)
+    matrix = np.stack([default_row, *vectors.values()])
 
     embeddings = {}
-    for sentence in sentences:
-        tokens = tokenizer.tokens(sentence)
-        if model == CONCEPTNET:
-            tokens = map(numberbatch_term, tokens)
+    for sentence, tokens in tokens_by_sentence.items():
         ids = [vocab.index(token) for token in tokens]
         matched_tokens = sum(index != vocab.default_index for index in ids)
         embeddings[sentence] = SentenceEmbedding(matrix[ids], len(ids), matched_tokens)
