@@ -1,5 +1,6 @@
 """Cross-validate embed-and-pool classifiers on SNLI premise-hypothesis pairs, using the part 1 setup."""
 
+import copy
 import csv
 import inspect
 import os
@@ -50,11 +51,19 @@ def tutorial_head(in_dim, dropout=0.5, hidden_size=50, num_layers=2, activation=
     return nn.Sequential(*layers, nn.LogSoftmax(-1))
 
 
-def token_ids(sentences, model, cache_dir, progress=True):
-    """Map each distinct sentence to word ids, and return the matching embedding matrix."""
-    tokenizer = BasicTokenizer(lowercase=False, remove_punct=False, remove_stopwords=False)
+TOKENIZER = BasicTokenizer(lowercase=False, remove_punct=False, remove_stopwords=False)
+
+
+def tokenize(sentence):
+    """Word tokens, dropping pure punctuation."""
+    return [t for t in TOKENIZER.tokens(sentence) if any(c.isalnum() for c in t)]
+
+
+def token_ids(sentences, model, cache_dir, progress=True, return_index=False):
+    """Map each distinct sentence to word ids, and return the matching embedding matrix.
+    return_index: also return the word -> row index, needed to encode new sentences later."""
     distinct = tqdm(dict.fromkeys(sentences), desc="tokenizing", disable=not progress)
-    tokens = {s: [t for t in tokenizer.tokens(s) if any(c.isalnum() for c in t)] for s in distinct}
+    tokens = {s: tokenize(s) for s in distinct}
     words = sorted({t for ts in tokens.values() for t in ts})
     keys = {form.encode() for w in words for form in (w, w.lower())}
 
@@ -71,7 +80,8 @@ def token_ids(sentences, model, cache_dir, progress=True):
 
     log(f"{len(rows) - 2}/{len(words)} words have a pretrained vector")
 
-    return ids, torch.tensor(np.stack(rows))
+    matrix = torch.tensor(np.stack(rows))
+    return (ids, matrix, index) if return_index else (ids, matrix)
 
 
 class PairEncoder(nn.Module):
@@ -110,10 +120,33 @@ def append_row(path, row, columns):
         writer.writerow(row)
 
 
+def save_fold(path, net, settings, index, matrix):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"state_dict": net.state_dict(), "settings": settings, "index": index,
+                "vocab_size": matrix.shape[0], "emb_dim": matrix.shape[1]}, path)
+
+
+def load_fold(path, device="cpu"):
+    """Rebuild a saved tutorial-head model; returns (net, index). Encode new sentences with encode(sentence, index)."""
+    ckpt = torch.load(path, map_location=device)
+    s = ckpt["settings"]
+    encoder = PairEncoder(embedding_matrix=torch.zeros(ckpt["vocab_size"], ckpt["emb_dim"]), average_pool=True,
+                          freeze_embeddings=True)
+    net = nn.Sequential(encoder, tutorial_head(encoder.enc_dim, s["dropout"], s["hidden_size"], s["num_layers"], s["activation"]))
+    net.load_state_dict(ckpt["state_dict"])
+    return net.to(device).eval(), ckpt["index"]
+
+
+def encode(sentence, index):
+    """Word ids for any sentence, unknown words map to UNK."""
+    return torch.tensor([index.get(t, UNK) for t in tokenize(sentence)], dtype=torch.long)
+
+
 def train(heads, settings, columns, results_file, lr, weight_decay, batch_size, epochs, model="ConceptNet Numberbatch",
-          folds=5, seed=42, train_size=None, cache_dir=DEFAULT_CACHE_DIR, progress=True):
+          folds=5, seed=42, train_size=None, cache_dir=DEFAULT_CACHE_DIR, progress=True, save_to=None):
     """Cross-validate each head ({name: in_dim -> module}) and append one row per (head, fold) to results_file.
-    train_size: first N training pairs only, for quick tests."""
+    train_size: first N training pairs only, for quick tests.
+    save_to: a folder; if given, each fold's best-epoch model is saved to <save_to>/<head>/fold-<k>.pt."""
     model_spec = next(m for m in MODELS if m.name == model)
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -121,7 +154,7 @@ def train(heads, settings, columns, results_file, lr, weight_decay, batch_size, 
 
     rows = [r for _, r in load_snli("train", cache_dir=cache_dir)][:train_size]
     splits = cross_validation_split(rows, k=folds, seed=seed)
-    ids, matrix = token_ids([r[f] for r in rows for f in ("premise", "hypothesis")], model_spec, cache_dir, progress)
+    ids, matrix, index = token_ids([r[f] for r in rows for f in ("premise", "hypothesis")], model_spec, cache_dir, progress, return_index=True)
 
     for head, make_head in heads.items():
         for fold, split in splits.items():
@@ -134,7 +167,7 @@ def train(heads, settings, columns, results_file, lr, weight_decay, batch_size, 
 
             log(f"{head} fold {fold + 1}/{len(splits)}: training on {len(split['training'])}, validating on {len(split['validation'])}")
 
-            history = []
+            history, best_state = [], None
             for epoch in range(epochs):
                 batches = tqdm(train_loader, desc=f"{head} fold {fold + 1} epoch {epoch + 1}", leave=False, disable=not progress)
                 tr = training_one_epoch(net, batches, optimizer, nn.NLLLoss(), device)
@@ -143,12 +176,22 @@ def train(heads, settings, columns, results_file, lr, weight_decay, batch_size, 
 
                 log(f"{head} fold {fold + 1} epoch {epoch + 1:02d} | train acc {tr['accuracy']:.4f} | val loss {va['loss']:.4f} | val acc {va['accuracy']:.4f}")
 
+                # same rule as the best-epoch pick below; a copy, or later epochs overwrite it
+                if save_to is not None and va["loss"] <= min(h["val_loss"] for h in history):
+                    best_state = copy.deepcopy(net.state_dict())
+
             # like part 1: the epoch with the lowest validation loss, later epochs win ties
             best = min(range(len(history)), key=lambda e: (history[e]["val_loss"], -e))
             record = {**settings, "head": head, "fold": fold + 1, "best_epoch": best + 1, **history[best]}
             append_row(results_file, record, columns)
-            
+
             log(f"{head} fold {fold + 1}: best epoch {best + 1}, val acc {history[best]['val_acc']:.4f}")
+
+            if save_to is not None:
+                net.load_state_dict(best_state)
+                path = Path(save_to) / head / f"fold-{fold + 1}.pt"
+                save_fold(path, net, settings, index, matrix)
+                log(f"{head} fold {fold + 1}: saved model to {path}")
 
 
 def run(dropout=0.5, hidden_size=50, num_layers=2, activation="tanh", lr=1e-3, weight_decay=1e-4, batch_size=256,
