@@ -1,5 +1,6 @@
 import argparse
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -8,6 +9,9 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from scipy.spatial.distance import cosine
 from sklearn.neighbors import KernelDensity
+
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from part2.lib.dataset import DEFAULT_CACHE_DIR, FIELDS, LABELS, load_snli
 from part2.lib.embeddings import MODELS, embed_snli_pairs
@@ -83,7 +87,9 @@ def write_oov_statistics(path, oov_counts):
                 "\n"
             )
         file.write(
-            "\nAll models use their global <unk> vector for tokens missing from the vocabulary.\n"
+            "\nCoverage counts lowercased NLTK tokens, including punctuation and stopwords, "
+            "from the premise and hypothesis. Numberbatch uses the RNN's digit masking. "
+            "Missing tokens receive the model's global <unk> vector.\n"
         )
 
 

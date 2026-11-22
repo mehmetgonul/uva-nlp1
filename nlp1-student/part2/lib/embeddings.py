@@ -1,13 +1,15 @@
 """Load pretrained word vectors for the tokens in each sentence."""
 
 import gzip
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from io import BufferedReader
 from pathlib import Path
 
 import numpy as np
 
-from ..clslib import BasicTokenizer, Vocabulary
+from ..clslib import BasicTokenizer, PretrainedEmbeddings, Vocabulary
 from .dataset import DEFAULT_CACHE_DIR, FIELDS, download
 
 
@@ -36,6 +38,22 @@ MODELS = (
     CONCEPTNET,
     gensim_model("Google News Word2Vec", "word2vec.gz", "word2vec-google-news-300", binary=True),
 )
+
+
+def snli_tokenizer():
+    return BasicTokenizer(lowercase=True, remove_punct=False, remove_stopwords=False, language="english")
+
+
+@lru_cache(maxsize=65536)
+def numberbatch_term(word):
+    """Numberbatch masks digits in words that contain two consecutive digits."""
+    word = word.lower()
+    return re.sub(r"\d", "#", word) if re.search(r"\d\d", word) else word
+
+
+def load_numberbatch_embeddings(cache_dir):
+    path = download(CONCEPTNET.url, Path(cache_dir) / CONCEPTNET.filename)
+    return PretrainedEmbeddings(str(path), num_dims=300, skip_first_line=True)
 
 
 def _binary_records(file, count, dimensions):
@@ -99,45 +117,24 @@ class SentenceEmbedding:
 
 def embed_sentences(sentences, model, *, cache_dir=DEFAULT_CACHE_DIR):
     """Return word vectors per distinct sentence, keyed by its original text."""
-    tokenizer = BasicTokenizer(
-        lowercase=False,
-        remove_punct=False,
-        remove_stopwords=False,
-    )
-    word_positions = {}
-    words = set()
-    for sentence in dict.fromkeys(sentences):
-        positions = []
-        for position, token in enumerate(tokenizer.tokens(sentence)):
-            if any(character.isalnum() for character in token):
-                positions.append(position)
-                words.add(token)
-        word_positions[sentence] = positions
-
-    path = download(model.url, Path(cache_dir) / model.filename)
-    keys = {form.encode() for word in words for form in (word, word.lower())}
-    vectors, default_row = _load_vectors_generic(path, model, keys)
-
-    # An empty token cannot pass the word filter, so its ID is reserved for misses.
-    vocab = Vocabulary([""], default="")
-    rows = [default_row]
-    for word in sorted(words):
-        key = word.encode()
-        vector = vectors.get(key)
-        if vector is None:
-            key = word.lower().encode()
-            vector = vectors.get(key)
-        if vector is not None:
-            vocab.add(word)
-            rows.append(vector)
-    vocab.freeze()
-    tokenizer.vocab = vocab
-    matrix = np.stack(rows)
+    sentences = dict.fromkeys(sentences)
+    tokenizer = snli_tokenizer()
+    if model == CONCEPTNET:
+        table = load_numberbatch_embeddings(cache_dir)
+        vocab, matrix = table.vocab, table.vectors
+    else:
+        keys = {token.encode() for sentence in sentences for token in tokenizer.tokens(sentence)}
+        path = download(model.url, Path(cache_dir) / model.filename)
+        vectors, default_row = _load_vectors_generic(path, model, keys)
+        vocab = Vocabulary(["", *(key.decode() for key in vectors)], default="", frozen=True)
+        matrix = np.stack([default_row, *vectors.values()])
 
     embeddings = {}
-    for sentence, positions in word_positions.items():
-        token_ids = tokenizer.ids(sentence)
-        ids = [token_ids[position] for position in positions]
+    for sentence in sentences:
+        tokens = tokenizer.tokens(sentence)
+        if model == CONCEPTNET:
+            tokens = map(numberbatch_term, tokens)
+        ids = [vocab.index(token) for token in tokens]
         matched_tokens = sum(index != vocab.default_index for index in ids)
         embeddings[sentence] = SentenceEmbedding(matrix[ids], len(ids), matched_tokens)
     return embeddings

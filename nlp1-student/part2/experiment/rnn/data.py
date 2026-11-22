@@ -15,7 +15,10 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import Subset
 
-from .clslib import BasicTokenizer, Vocabulary
+from part2.clslib import BasicTokenizer, PretrainedEmbeddings, Vocabulary
+from part2.lib.dataset import DEFAULT_CACHE_DIR, download
+from part2.lib.embeddings import CONCEPTNET
+
 from .experiment import LabelledCorpus
 
 SNLI_LABELS = ("entailment", "neutral", "contradiction")
@@ -36,35 +39,17 @@ class NumberbatchTable:
     pad_token: str = "<pad>"
 
 
-def load_numberbatch(sentences, cache_dir):
-    cache_file = Path(cache_dir) / "snli_embedding_similarity" / "numberbatch.npz"
-    if cache_file.is_file():
-        with np.load(cache_file, allow_pickle=False) as cache:
-            pairs = zip(cache["words"].tolist(), cache["vectors"], strict=True)
-            word_vectors = {numberbatch_term(word): vec for word, vec in pairs if vec.any()}
-        source = cache_file.name
-    else:
-        # The project's checkpoint reader also recovers missing terms by matching prefixes.
-        from part2.lib.dataset import DEFAULT_CACHE_DIR, download
-        from part2.lib.embeddings import CONCEPTNET, _load_vectors_conceptnet
-
-        path = download(CONCEPTNET.url, DEFAULT_CACHE_DIR / CONCEPTNET.filename)
-        terms = {term.encode() for tokens in sentences for term in tokens}
-        matches, _, _ = _load_vectors_conceptnet(path, terms)
-        word_vectors = {}
-        for key, vec in matches.items():
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                word_vectors[key.decode()] = vec / norm
-        source = CONCEPTNET.url
-
-    words = ["<pad>", "<unk>", "<sep>", *sorted(word_vectors)]
-    vocab = Vocabulary(words, default="<unk>", frozen=True)
-    vectors = np.zeros((len(vocab), 300), dtype=np.float32)
-    vectors[vocab.index("<sep>")] = np.random.default_rng(42).normal(0, 0.02, size=300)
-    for word, vector in word_vectors.items():
-        vectors[vocab.index(word)] = vector
-    return NumberbatchTable(vocab, vectors, source)
+def load_numberbatch():
+    path = download(CONCEPTNET.url, DEFAULT_CACHE_DIR / CONCEPTNET.filename)
+    embeddings = PretrainedEmbeddings(str(path), num_dims=300, skip_first_line=True)
+    vocab = embeddings.vocab
+    vectors = embeddings.vectors
+    if "<sep>" not in vocab:
+        # Append the SNLI separator after the tutorial loader has computed <unk>.
+        vocab = Vocabulary([*vocab, "<sep>"], default=embeddings.unk_token, frozen=True)
+        separator = np.random.default_rng(42).normal(0, 0.02, size=embeddings.num_dims)
+        vectors = np.vstack((vectors, separator.astype(vectors.dtype)))
+    return NumberbatchTable(vocab, vectors, CONCEPTNET.url)
 
 
 def load_snli_training(cache_dir):
@@ -78,16 +63,13 @@ def load_snli_training(cache_dir):
         remove_stopwords=False,
         language="english",
     )
+    table = load_numberbatch()
+    vocab = table.vocab
     sentences = {}
     for text in chain(data["premise"], data["hypothesis"]):
         if text not in sentences:
             tokens = tokenizer.tokens(text)
-            sentences[text] = [numberbatch_term(token) for token in tokens]
-
-    table = load_numberbatch(sentences.values(), cache_dir)
-    vocab = table.vocab
-    for text, tokens in sentences.items():
-        sentences[text] = [vocab.index(token) for token in tokens]
+            sentences[text] = [vocab.index(numberbatch_term(token)) for token in tokens]
 
     sep_id = vocab.index("<sep>")
     inputs = (
