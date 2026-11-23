@@ -119,6 +119,7 @@ def train(
     *,
     seed=None,
     shared_table=None,
+    random_init_embeddings=False,
 ):
     """Train on labelled texts, or on token IDs when tokenizer is None."""
     if opt_kwargs['num_epochs'] < 1:
@@ -192,6 +193,9 @@ def train(
     else:
         raise ValueError(f"I do not know this encoder type: {enc_type}")    
 
+    if random_init_embeddings:
+        encoder.embedding.reset_parameters()
+
     model = clslib.SoftmaxRegressor(        
         encoder=encoder,
         **regressor_kwargs
@@ -219,7 +223,8 @@ def train(
             best_val_loss = val_metrics["loss"]
             best_epoch = epoch
             state = model.state_dict()
-            if shared_table is not None and not model.encoder.embedding.weight.requires_grad:
+            if (shared_table is not None and not random_init_embeddings
+                    and not model.encoder.embedding.weight.requires_grad):
                 del state["encoder.embedding.weight"]
             torch.save(state, f"{save_to}.pt")
 
@@ -283,6 +288,7 @@ def cross_validation(
     *,
     seed=None,
     shared_table=None,
+    random_init_embeddings=False,
 ):
     """
     Trains and evaluates k models using a k-fold data split for cross validation. 
@@ -326,6 +332,7 @@ def cross_validation(
                 save_to=staging / "model",
                 seed=seed,
                 shared_table=table_ref,
+                random_init_embeddings=random_init_embeddings,
             )
             best = metrics[best_epoch]["val_metrics"]
             models[fold] = str(fold_folder / "model")

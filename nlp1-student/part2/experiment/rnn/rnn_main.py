@@ -4,8 +4,9 @@
 SEEDS = [42]
 NUM_FOLDS = 5
 
-# LSTM encoder with fixed ConceptNet embeddings
-LSTM_HIDDEN_SIZES = [35]
+# Embedding initialization and LSTM encoder
+EMBEDDING_MODELS = ["finetuned"]
+LSTM_HIDDEN_SIZES = [40]
 LSTM_NUM_LAYERS = [4]
 LSTM_BIDIRECTIONAL = [False]
 
@@ -13,12 +14,21 @@ LSTM_BIDIRECTIONAL = [False]
 CLASSIFIER_HIDDEN_SIZES = [(50, 50)]
 CLASSIFIER_DROPOUT_RATES = [0.1]
 
-# AdamW and training schedule
 # LEARNING_RATES = [3e-3, 1e-3, 5e-4]
-LEARNING_RATES = [1e-3]
+LEARNING_RATES = [3e-3]
 WEIGHT_DECAYS = [1e-4]
-BATCH_SIZES = [512]
-NUM_EPOCHS = [10]
+BATCH_SIZES = [128]
+NUM_EPOCHS = [20]
+
+
+def lstm_run_stem(depth, hidden_size, bidirectional, embedding_model):
+    direction_suffix = "-bidir" if bidirectional else ""
+    stem = f"lstm{depth}x{hidden_size}{direction_suffix}"
+    if embedding_model == "frozen":
+        return f"frozen-{stem}"  # backward compatability
+    if embedding_model in ("finetuned", "scratch"):
+        return f"{stem}-{embedding_model}"
+    raise ValueError(f"Unknown embedding model: {embedding_model}")
 
 
 if __name__ == "__main__":
@@ -39,21 +49,24 @@ if __name__ == "__main__":
     elif torch.backends.mps.is_available():
         device = "mps"
 
-    output_dir = rnn_dir / "output" / "conceptnet" / "temp_tok"
+    output_dir = Path("/Users/mehmetvecdigonul/git/uva-nlp1/nlp1-student/part2/experiment/rnn/output/conceptnet")
     corpus = None
 
     for seed in SEEDS:
         folds = None
         grid = product(
-            LSTM_HIDDEN_SIZES, LSTM_NUM_LAYERS, LSTM_BIDIRECTIONAL,
+            EMBEDDING_MODELS, LSTM_HIDDEN_SIZES, LSTM_NUM_LAYERS, LSTM_BIDIRECTIONAL,
             CLASSIFIER_HIDDEN_SIZES, CLASSIFIER_DROPOUT_RATES,
             LEARNING_RATES, WEIGHT_DECAYS, BATCH_SIZES, NUM_EPOCHS,
         )
-        for hidden_size, depth, bidirectional, widths, dropout, lr, weight_decay, batch_size, epochs in grid:
+        for (
+            embedding_model, hidden_size, depth, bidirectional, widths, dropout,
+            lr, weight_decay, batch_size, epochs,
+        ) in grid:
             head = "-".join(map(str, widths)) or "linear"
-            direction_suffix = "-bidir" if bidirectional else ""
+            stem = lstm_run_stem(depth, hidden_size, bidirectional, embedding_model)
             name = (
-                f"frozen-lstm{depth}x{hidden_size}{direction_suffix}-mlp{head}-drop{dropout}"
+                f"{stem}-mlp{head}-drop{dropout}"
                 f"-lr{lr}-wd{weight_decay}-batch{batch_size}-epochs{epochs}-cv{NUM_FOLDS}"
             )
             run_dir = output_dir / name / f"seed-{seed}"
@@ -81,7 +94,7 @@ if __name__ == "__main__":
                     "hidden_size": hidden_size,
                     "num_layers": depth,
                     "bidirectional": bidirectional,
-                    "freeze_embeddings": True,
+                    "freeze_embeddings": embedding_model == "frozen",
                 },
                 regressor_kwargs={"hidden_sizes": widths, "dropout": dropout},
                 opt_kwargs={
@@ -93,6 +106,7 @@ if __name__ == "__main__":
                 device=device,
                 seed=seed,
                 shared_table=table_path,
+                random_init_embeddings=embedding_model == "scratch",
                 save_to=run_dir,
             )
             print(f"Validation accuracies: {run['accuracies']}", flush=True)
